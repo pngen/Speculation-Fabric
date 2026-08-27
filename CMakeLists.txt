@@ -25,8 +25,10 @@ endif()
 # Compiler settings: /W4 /WX on MSVC, equivalent strictness elsewhere.
 # ---------------------------------------------------------------------------
 if(MSVC)
-    add_compile_options(/W4 /WX /permissive- /Zc:__cplusplus /utf-8)
-    add_compile_options(/EHsc)
+    # Strictness for C++ translation units. Applied through CMAKE_CXX_FLAGS so
+    # it never leaks into the nvcc driver argument list. CUDA host code is
+    # handled separately through CMAKE_CUDA_FLAGS (via -Xcompiler).
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /W4 /WX /permissive- /Zc:__cplusplus /utf-8 /EHsc")
 else()
     add_compile_options(-Wall -Wextra -Werror -Wpedantic)
 endif()
@@ -73,10 +75,18 @@ target_include_directories(SpeculationFabric
 target_compile_features(SpeculationFabric PUBLIC cxx_std_20)
 
 if(SF_CUDA_ENABLED)
+    set(SF_CUDA_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/cuda/cuda_executor.cu")
     target_sources(SpeculationFabric PRIVATE ${SF_CUDA_SOURCES})
-    target_compile_features(SpeculationFabric PUBLIC cuda_std_17)
+    target_compile_features(SpeculationFabric PUBLIC cuda_std_20)
     target_link_libraries(SpeculationFabric PUBLIC CUDA::cudart)
     set_property(TARGET SpeculationFabric PROPERTY CUDA_ARCHITECTURES 120)
+    # Host-compiler strictness for the CUDA translation unit, forwarded via
+    # -Xcompiler so it does not pollute the nvcc driver's own argument list.
+    string(APPEND CMAKE_CUDA_FLAGS " -Xcompiler=/W4 -Xcompiler=/WX")
+    string(APPEND CMAKE_CUDA_FLAGS " -Xcompiler=/permissive- -Xcompiler=/Zc:__cplusplus")
+    # nvcc's own generated C stub triggers a spurious C4211 under /W4; it is
+    # not our code, so suppress only that code.
+    string(APPEND CMAKE_CUDA_FLAGS " -Xcompiler=/wd4211")
 endif()
 
 # ---------------------------------------------------------------------------

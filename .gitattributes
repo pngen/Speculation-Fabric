@@ -1,0 +1,22 @@
+# Normalize line endings for text files.
+* text=auto
+
+# Source: always normalize to LF in the repository.
+*.cpp text eol=lf
+*.hpp text eol=lf
+*.h text eol=lf
+*.cu text eol=lf
+*.cuh text eol=lf
+*.c text eol=lf
+*.cmake text eol=lf
+*.in text eol=lf
+*.txt text eol=lf
+CMakeLists.txt text eol=lf
+
+# Documents
+*.md text eol=lf
+*.rst text eol=lf
+
+# Binaries
+*.png binary
+*.pdf binary
