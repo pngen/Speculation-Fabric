@@ -12,3 +12,8 @@ endif()
 sf_add_test(test_persistence test_persistence.cpp)
 sf_add_test(test_wire test_wire.cpp)
 sf_add_test(test_property test_property.cpp)
+sf_add_test(test_adversarial test_adversarial.cpp)
+
+sf_add_test(test_concurrency test_concurrency.cpp)
+
+sf_add_test(test_recovery test_recovery.cpp)

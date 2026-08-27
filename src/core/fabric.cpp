@@ -212,7 +212,9 @@ SpeculationFabric::~SpeculationFabric() = default;
 Result<void> SpeculationFabric::submit(const SpeculationRequest& req) {
     std::lock_guard<std::mutex> g(impl_->mtx);
     auto& rs = impl_->requests[req.id];
-    if (!rs.req.id.is_null() && rs.req.id != req.id) {
+    if (!rs.req.id.is_null()) {
+        // A duplicate RequestId is a duplicate submission and is rejected;
+        // it is never silently treated as an overwrite.
         return Result<void>::err(ErrorCode::already_exists,
                                  "request id already registered");
     }

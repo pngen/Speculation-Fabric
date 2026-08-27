@@ -12,6 +12,7 @@
 #include "speculation_fabric/core/fabric.hpp"
 #include "speculation_fabric/core/cpu_proposer.hpp"
 #include "speculation_fabric/core/cpu_verifier.hpp"
+#include "speculation_fabric/core/persistence.hpp"
 
 using namespace speculation_fabric;
 
@@ -149,6 +150,56 @@ static int cmd_bench(std::uint32_t depth, std::uint32_t requests) {
     return 0;
 }
 
+
+static int cmd_inspect(std::uint32_t depth, std::uint32_t branches, std::uint32_t aligned, std::uint64_t id) {
+    auto f = make_engine(depth, branches, aligned);
+    SpeculationRequest r; r.id = RequestId{id}; r.sequence = SequenceId{id + 1}; r.tenant = TenantId{1};
+    r.draft_model = make_model(TokenizerId{9}); r.target_model = r.draft_model;
+    r.pair_key.proposer = r.draft_model; r.pair_key.verifier = r.target_model; r.pair_key.protocol_version = 1;
+    r.policy.max_depth = depth; r.policy.max_branches = branches; r.policy.adaptive_depth_enabled = false;
+    (void)f.submit(r);
+    for (int i = 0; i < 2; ++i) (void)f.run_cycle(r.id);
+    auto pr = f.proposals(r.id); auto br = f.branches(r.id);
+    auto ex = f.explain(r.id, "inspect");
+    std::printf("inspect request=%llu\n  gen=%s\n  proposals=%zu branches=%zu\n  %s\n",
+                (unsigned long long)id, ex.answer_json.c_str(), pr.value().size(),
+                br.value().size(), ex.answer_text.c_str());
+    return 0;
+}
+
+static int cmd_cancel(std::uint32_t depth, std::uint32_t branches, std::uint32_t aligned, std::uint64_t id) {
+    auto f = make_engine(depth, branches, aligned);
+    SpeculationRequest r; r.id = RequestId{id}; r.sequence = SequenceId{id + 1}; r.tenant = TenantId{1};
+    r.draft_model = make_model(TokenizerId{9}); r.target_model = r.draft_model;
+    r.pair_key.proposer = r.draft_model; r.pair_key.verifier = r.target_model; r.pair_key.protocol_version = 1;
+    r.policy.max_depth = depth; r.policy.max_branches = branches; r.policy.adaptive_depth_enabled = false;
+    (void)f.submit(r);
+    auto c = f.cancel(r.id, "cli cancel");
+    auto o = f.run_cycle(r.id);
+    std::printf("cancel %s: outcome=%d\n", c.has_value() ? "ok" : "fail", (int)o.value().outcome);
+    return (c.has_value() && o.value().outcome == CycleOutcomeKind::Cancelled) ? 0 : 1;
+}
+
+static int cmd_recover(std::uint32_t depth) {
+    auto f = make_engine(depth, 1, depth);
+    SpeculationRequest r; r.id = RequestId{1}; r.sequence = SequenceId{2}; r.tenant = TenantId{1};
+    r.draft_model = make_model(TokenizerId{9}); r.target_model = r.draft_model;
+    r.pair_key.proposer = r.draft_model; r.pair_key.verifier = r.target_model; r.pair_key.protocol_version = 1;
+    r.policy.max_depth = depth; r.policy.adaptive_depth_enabled = false;
+    (void)f.submit(r);
+    (void)f.run_cycle(r.id);
+    StateArchive a; a.epoch = CoordinatorEpoch{1};
+    PersistedRequest pr; pr.id = r.id; pr.sequence = r.sequence; pr.attempt = AttemptId{1};
+    pr.epoch = CoordinatorEpoch{1}; pr.auth_gen = AuthGeneration{depth};
+    pr.auth_state.id = StateId{77}; pr.auth_state.generation = StateGeneration{depth};
+    pr.committed.assign(f.authoritative_length(r.id).value(), 1u);
+    a.requests.push_back(pr);
+    auto blob = serialize_archive(a);
+    auto b = deserialize_archive(blob.value());
+    std::printf("recover: ok=%d tokens=%zu\n", (int)b.has_value(), b.value().requests[0].committed.size());
+    return b.has_value() ? 0 : 1;
+}
+
 int main(int argc, char** argv) {
     if (argc < 2) {
         std::printf("Speculation Fabric CLI\n"
@@ -170,6 +221,9 @@ int main(int argc, char** argv) {
     if (cmd == "status") return cmd_status(depth, branches, aligned);
     if (cmd == "explain") return cmd_explain(depth);
     if (cmd == "bench") return cmd_bench(depth, (std::uint32_t)id);
+    if (cmd == "inspect") return cmd_inspect(depth, branches, aligned, id);
+    if (cmd == "cancel") return cmd_cancel(depth, branches, aligned, id);
+    if (cmd == "recover") return cmd_recover(depth);
     std::printf("unknown command: %s\n", cmd.c_str());
     return 1;
 }
