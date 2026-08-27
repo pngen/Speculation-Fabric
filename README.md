@@ -159,6 +159,10 @@ flowchart LR
 sf submit --depth 5 --aligned 5 --id 100
 sf status --depth 5
 sf explain --depth 5
+sf inspect --depth 5 --id 101
+sf cancel --depth 5 --id 102
+sf recover --depth 5
+sf bench --depth 4 --requests 2000
 ```
 
 ## Test and proof highlights
@@ -168,7 +172,13 @@ partial acceptance, rejected-suffix rollback, multi-branch behavior,
 cancellation, retry, incompatible-pair rejection, persistence round-trips and
 rejection of corruption/truncation/unknown versions, framed-protocol validation,
 and CUDA proposer/verifier cross-validation against the CPU reference on an
-RTX 5090. A real framed-TCP distributed control plane (`sf_coordinator`, `sf_worker`, `sf_driver`) is proven over real OS processes,
+RTX 5090. A dedicated adversarial suite, a multi-threaded concurrency-stress
+suite, a recovery-from-states suite, a measured-throughput benchmark
+(`sf_bench`), and 12 runnable examples are included. A real framed-TCP
+distributed control plane (`sf_coordinator`, `sf_worker`, `sf_driver`) is proven over real OS processes,
+including a worker kill + restart with a new WorkerBootId, coordinator epoch
+rollover, deterministic rejection of every stale-authority class, and fresh
+committed work under the current authority. A real framed-TCP distributed control plane (`sf_coordinator`, `sf_worker`, `sf_driver`) is proven over real OS processes,
 including a worker kill + restart with a new WorkerBootId, coordinator epoch
 rollover, deterministic rejection of every stale-authority class, and fresh
 committed work under the current authority.

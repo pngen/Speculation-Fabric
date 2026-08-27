@@ -24,6 +24,15 @@ with /W4 /WX and zero warnings in Release and Debug.
   against the CPU reference on the device, including full/partial/reject
   acceptance and device memory recovery.
 
+- test_adversarial: invalid inputs (zero/absurd depth), incompatible pair,
+  duplicate request id, empty candidate, acceptance bounds, reject-no-commit.
+- test_concurrency: multi-threaded stress over a shared thread-safe engine.
+- test_recovery: recovery from pre-proposal / partial-accept / post-commit
+  archives, no double-commit.
+
+The benchmark `sf_bench` measures throughput of real completed work with exact
+recorded workloads (requests, depth, branches, acceptance profile).
+
 ## Invariants asserted
 
 The suites continuously assert that authoritative token count never decreases,
