@@ -1,0 +1,62 @@
+# Build trees
+build/
+build-*/
+cmake-build-*/
+out/
+_install/
+install/
+
+# CMake user presets
+CMakeUserPresets.json
+
+# Visual Studio / IDE artifacts
+.vs/
+*.user
+*.suo
+.vscode/
+.idea/
+*.VC.db
+*.VC.VC.opendb
+ipch/
+
+# Compiled object / binary artifacts
+*.obj
+*.pdb
+*.ilk
+*.lib
+*.dll
+*.exe
+*.o
+*.a
+*.so
+*.dylib
+*.out
+*.exe.*
+cmake_install.cmake
+CMakeCache.txt
+Makefile
+CMakeFiles/
+
+# CUDA artifacts
+*.cudafe1.cpp
+*.ptx
+cuda_test*
+
+# CTest / test output
+Testing/
+CTestTestfile.cmake
+test-results/
+*.log
+
+# Traces, benchmarks, temp
+traces/
+*.trace
+bench-results/
+*.tmp
+*.temp
+scratch/
+
+# Secrets
+*.pem
+*.key
+.env

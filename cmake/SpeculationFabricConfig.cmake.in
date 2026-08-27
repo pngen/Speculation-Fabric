@@ -1,0 +1,13 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+# CUDA runtime is an optional dependency of the library; only add it if it was
+# linked at build time.
+if(@SF_CUDA_ENABLED@)
+    find_dependency(CUDAToolkit)
+endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/SpeculationFabricTargets.cmake")
+
+check_required_components(SpeculationFabric)
