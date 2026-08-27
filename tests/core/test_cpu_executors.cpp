@@ -145,9 +145,10 @@ SF_TEST_FN(cpu_proposer_branches_distinct) {
 
 SF_TEST_FN(verifier_retryable_failure) {
     CpuVerifierExecutor ver;
-    auto v = make_verify(ProposalResult{}, 4);
-    v.candidate_identity.tokenizer = TokenizerId{};   // null tokenizer
-    v.candidate = CandidateSequence(std::vector<Token>{{1},{2},{3},{4}});
+    ProposalResult pr;
+    pr.candidate = CandidateSequence(std::vector<Token>{{1},{2},{3},{4}});
+    auto v = make_verify(pr, 4);                      // has a valid candidate
+    v.candidate_identity.tokenizer = TokenizerId{};   // null tokenizer => retryable failure
     auto vr = ver.verify(v);
     SF_CHECK(vr.value().outcome == AcceptanceOutcome::VerifierFailure);
     SF_CHECK(vr.value().retryable == true);
@@ -155,10 +156,11 @@ SF_TEST_FN(verifier_retryable_failure) {
 
 SF_TEST_FN(verifier_incompatible_vocab_retryable_false) {
     CpuVerifierExecutor ver;
-    auto v = make_verify(ProposalResult{}, 4);
+    ProposalResult pr;
+    pr.candidate = CandidateSequence(std::vector<Token>{{1},{2},{3},{4}});
+    auto v = make_verify(pr, 4);
     v.candidate_identity.tokenizer = TokenizerId{9};
     v.candidate_identity.vocab_size = 100;   // wrong vocabulary
-    v.candidate = CandidateSequence(std::vector<Token>{{1},{2},{3},{4}});
     auto vr = ver.verify(v);
     SF_CHECK(vr.value().outcome == AcceptanceOutcome::VerifierFailure);
     SF_CHECK(vr.value().retryable == false);
