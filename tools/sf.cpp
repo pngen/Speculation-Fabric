@@ -200,6 +200,51 @@ static int cmd_recover(std::uint32_t depth) {
     return b.has_value() ? 0 : 1;
 }
 
+
+static int cmd_snapshot(std::uint32_t depth) {
+    auto f = make_engine(depth, 1, depth);
+    SpeculationRequest r; r.id = RequestId{1}; r.sequence = SequenceId{2}; r.tenant = TenantId{1};
+    r.draft_model = make_model(TokenizerId{9}); r.target_model = r.draft_model;
+    r.pair_key.proposer = r.draft_model; r.pair_key.verifier = r.target_model; r.pair_key.protocol_version = 1;
+    r.policy.max_depth = depth; r.policy.adaptive_depth_enabled = false;
+    (void)f.submit(r);
+    (void)f.run_cycle(r.id);
+    auto s = f.snapshot();
+    std::printf("snapshot: epoch=%llu active_requests=%zu branches=%zu proposals=%zu reservations=%zu\n",
+                (unsigned long long)s.epoch.get(), s.active_requests, s.active_branches,
+                s.active_proposals, s.active_reservations);
+    return 0;
+}
+
+static int cmd_proposals(std::uint32_t depth, std::uint64_t id) {
+    auto f = make_engine(depth, 1, depth);
+    SpeculationRequest r; r.id = RequestId{id}; r.sequence = SequenceId{id + 1}; r.tenant = TenantId{1};
+    r.draft_model = make_model(TokenizerId{9}); r.target_model = r.draft_model;
+    r.pair_key.proposer = r.draft_model; r.pair_key.verifier = r.target_model; r.pair_key.protocol_version = 1;
+    r.policy.max_depth = depth; r.policy.adaptive_depth_enabled = false;
+    (void)f.submit(r);
+    (void)f.run_cycle(r.id);
+    auto pr = f.proposals(r.id);
+    std::printf("proposals: count=%zu\n", pr.value().size());
+    for (const auto& p : pr.value()) std::printf("  p%llu depth=%u committed=%d\n",
+                (unsigned long long)p.id.get(), (unsigned)p.depth(), (int)p.committed);
+    return 0;
+}
+
+static int cmd_branches(std::uint32_t depth, std::uint64_t id) {
+    auto f = make_engine(depth, 2, 2);
+    SpeculationRequest r; r.id = RequestId{id}; r.sequence = SequenceId{id + 1}; r.tenant = TenantId{1};
+    r.draft_model = make_model(TokenizerId{9}); r.target_model = r.draft_model;
+    r.pair_key.proposer = r.draft_model; r.pair_key.verifier = r.target_model; r.pair_key.protocol_version = 1;
+    r.policy.max_depth = depth; r.policy.max_branches = 2; r.policy.adaptive_depth_enabled = false;
+    (void)f.submit(r);
+    (void)f.run_cycle(r.id);
+    auto br = f.branches(r.id);
+    std::printf("branches: count=%zu\n", br.value().size());
+    for (const auto& b : br.value()) std::printf("  b%llu retired=%d\n", (unsigned long long)b.id.get(), (int)b.retired);
+    return 0;
+}
+
 int main(int argc, char** argv) {
     if (argc < 2) {
         std::printf("Speculation Fabric CLI\n"
@@ -224,6 +269,9 @@ int main(int argc, char** argv) {
     if (cmd == "inspect") return cmd_inspect(depth, branches, aligned, id);
     if (cmd == "cancel") return cmd_cancel(depth, branches, aligned, id);
     if (cmd == "recover") return cmd_recover(depth);
+    if (cmd == "snapshot") return cmd_snapshot(depth);
+    if (cmd == "proposals") return cmd_proposals(depth, id);
+    if (cmd == "branches") return cmd_branches(depth, id);
     std::printf("unknown command: %s\n", cmd.c_str());
     return 1;
 }

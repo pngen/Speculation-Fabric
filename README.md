@@ -163,6 +163,9 @@ sf inspect --depth 5 --id 101
 sf cancel --depth 5 --id 102
 sf recover --depth 5
 sf bench --depth 4 --requests 2000
+sf snapshot --depth 5
+sf proposals --depth 5 --id 7
+sf branches --depth 5 --id 8
 ```
 
 ## Test and proof highlights
