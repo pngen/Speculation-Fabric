@@ -22,6 +22,8 @@ constexpr CodeName kCodes[] = {
     {ErrorCode::internal, "internal", "internal error"},
     {ErrorCode::capacity_exceeded, "capacity_exceeded", "capacity exceeded"},
     {ErrorCode::buffer_full, "buffer_full", "buffer full"},
+    {ErrorCode::corrupt, "corrupt", "data corrupt"},
+    {ErrorCode::malformed, "malformed", "malformed data"},
     {ErrorCode::invalid_proposal, "invalid_proposal", "invalid proposal"},
     {ErrorCode::invalid_candidate, "invalid_candidate", "invalid candidate"},
     {ErrorCode::invalid_branch, "invalid_branch", "invalid branch"},

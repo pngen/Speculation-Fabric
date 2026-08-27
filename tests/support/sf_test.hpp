@@ -49,7 +49,7 @@ inline int run_all() {
     int total_checks = 0;
     for (const auto& t : registry()) {
         current_mut() = t.name;
-        std::printf("[ RUN ] %s\n", t.name);
+        std::printf("[ RUN ] %s\n", t.name); std::fflush(stdout);
         const int before_fail = failure_count();
         const int before_check = check_count();
         t.fn();
@@ -57,6 +57,7 @@ inline int run_all() {
         std::printf("[  %s  ] %s (%d checks)\n",
                     failure_count() == before_fail ? "OK" : "FAIL", t.name,
                     check_count() - before_check);
+        std::fflush(stdout);
     }
     std::printf("TOTAL checks=%d failures=%d\n", total_checks, failure_count());
     return failure_count() == 0 ? 0 : 1;

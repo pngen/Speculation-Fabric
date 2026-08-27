@@ -33,6 +33,8 @@ enum class ErrorCode {
     internal = 8,
     capacity_exceeded = 9,
     buffer_full = 10,
+    corrupt = 11,
+    malformed = 12,
 
     // -- Validation ----------------------------------------------------------
     invalid_proposal = 100,
