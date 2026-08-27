@@ -44,3 +44,12 @@ The decoder rejects unknown protocol versions, unknown message types,
 oversized frames, truncated frames, zero-length messages, malformed identities,
 and impossible candidate depths. Stale epoch, stale boot, obsolete attempt, and
 obsolete generation are rejected with structured stale-authority errors.
+
+## Process model
+
+`sf_coordinator` is the distributed authority. `sf_worker` runs as a proposer
+or verifier worker OS process (selected by argv role) and connects to the
+coordinator. `sf_driver` drives heterogeneous speculative work and stale-
+authority re-probes. A worker restart appears as a new connection with a new
+WorkerBootId; authority from the previous boot id is rejected by the
+coordinator's authority gate.

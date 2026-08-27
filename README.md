@@ -168,7 +168,10 @@ partial acceptance, rejected-suffix rollback, multi-branch behavior,
 cancellation, retry, incompatible-pair rejection, persistence round-trips and
 rejection of corruption/truncation/unknown versions, framed-protocol validation,
 and CUDA proposer/verifier cross-validation against the CPU reference on an
-RTX 5090.
+RTX 5090. A real framed-TCP distributed control plane (`sf_coordinator`, `sf_worker`, `sf_driver`) is proven over real OS processes,
+including a worker kill + restart with a new WorkerBootId, coordinator epoch
+rollover, deterministic rejection of every stale-authority class, and fresh
+committed work under the current authority.
 
 See `docs/validation.md` for the exact validation matrix and
 `docs/limitations.md` for the known limitations of this implementation.

@@ -42,3 +42,25 @@ The full suite is run repeatedly in clean Release and Debug configurations.
 The distributed stale-authority closure proof is an atomic requirement at the
 validation layer. See docs/protocol.md and the distributed scenario in the
 repository for the exact multiprocess scenario.
+
+## Atomic distributed closure scenario
+
+The repository ships a real framed-TCP distributed control plane
+(`sf_coordinator`, `sf_worker`, `sf_driver`) and an atomic multiprocess
+scenario (`tools/run_distributed_scenario.ps1`) that:
+
+- launches a coordinator, a proposer worker, and a verifier worker as real OS
+  processes and establishes proposer/verifier capability over framed TCP,
+- submits heterogeneous multi-tenant requests across multiple depths and a
+  multi-branch cycle,
+- demonstrates real full acceptance, partial-prefix acceptance, rejected-suffix
+  rollback, and fresh authoritative commit,
+- kills a proposer worker as an actual OS process and restarts it as a new OS
+  process with a NEW WorkerBootId (the coordinator detects the reconnection),
+- rolls the coordinator epoch,
+- replays preserved old-epoch / old-boot / obsolete-attempt / obsolete-
+  generation authority and proves each is deterministically rejected, and
+- proves that no stale message commits a token or advances authoritative
+  generation, that fresh work commits under the current authority, that losing
+  branches cannot later commit, and that the coordinator closes with correct
+  committed counts for every request.
