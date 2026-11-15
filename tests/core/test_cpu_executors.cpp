@@ -165,3 +165,34 @@ SF_TEST_FN(verifier_incompatible_vocab_retryable_false) {
     SF_CHECK(vr.value().outcome == AcceptanceOutcome::VerifierFailure);
     SF_CHECK(vr.value().retryable == false);
 }
+
+// Regression: the accepted prefix is the run of accepted positions before the
+// first rejection. A position that matches the target again after a rejection
+// is part of the rejected suffix, never of the prefix.
+SF_TEST_FN(verifier_accepted_prefix_stops_at_first_rejection) {
+    CpuProposerConfig pc; pc.aligned_tokens = 6;
+    CpuProposerExecutor prop(pc);
+    auto r = prop.propose(make_input(6));
+    SF_CHECK(r.has_value());
+    CpuVerifierExecutor ver;
+
+    // Wrong at position 1, matching the target again at positions 2..5.
+    auto pr = r.value();
+    pr.candidate->tokens[1].id = (pr.candidate->tokens[1].id + 1u) % 4096u;
+    auto vr = ver.verify(make_verify(pr, 6));
+    SF_CHECK(vr.has_value());
+    SF_CHECK(vr.value().outcome == AcceptanceOutcome::PartialAccept);
+    SF_CHECK(vr.value().accepted_prefix == 1);
+    SF_CHECK(vr.value().first_rejection_index == 1);
+    SF_CHECK(vr.value().per_position == std::vector<std::uint8_t>({1, 0, 1, 1, 1, 1}));
+    SF_CHECK(vr.value().authoritative_next_generation.get() == 6u);   // base 5 + 1 accepted
+
+    // Wrong at position 0: nothing is accepted, whatever follows.
+    auto pr0 = r.value();
+    pr0.candidate->tokens[0].id = (pr0.candidate->tokens[0].id + 1u) % 4096u;
+    auto vr0 = ver.verify(make_verify(pr0, 6));
+    SF_CHECK(vr0.has_value());
+    SF_CHECK(vr0.value().outcome == AcceptanceOutcome::RejectAll);
+    SF_CHECK(vr0.value().accepted_prefix == 0);
+    SF_CHECK(vr0.value().first_rejection_index == 0);
+}

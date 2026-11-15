@@ -116,3 +116,55 @@ SF_TEST_FN(cuda_memory_recovery_after_cleanup) {
     SF_CHECK_EQ(static_cast<int>(cudaDeviceSynchronize()), 0);
     SF_CHECK_EQ(static_cast<int>(cudaGetLastError()), 0);
 }
+
+// Regression: like the CPU reference, the accepted prefix ends at the first
+// rejection even when later positions match the target again.
+SF_TEST_FN(cuda_verifier_prefix_stops_at_first_rejection_like_cpu) {
+    CpuProposerConfig pc;
+    pc.aligned_tokens = 6;
+    CpuProposerExecutor cpu(pc);
+    auto r = cpu.propose(make_input(6, 0));
+    SF_CHECK(r.has_value());
+    auto cand = *r.value().candidate;
+    cand.tokens[1].id = (cand.tokens[1].id + 1u) % 4096u;   // wrong at 1, right again after
+    CpuVerifierExecutor cpu_v;
+    CudaVerifierExecutor gpu_v;
+    auto v = make_verify(cand);
+    auto cv = cpu_v.verify(v);
+    auto gv = gpu_v.verify(v);
+    SF_CHECK(cv.has_value());
+    SF_CHECK(gv.has_value());
+    SF_CHECK(gv.value().outcome == AcceptanceOutcome::PartialAccept);
+    SF_CHECK_EQ(gv.value().accepted_prefix, 1u);
+    SF_CHECK_EQ(gv.value().first_rejection_index, 1u);
+    SF_CHECK_EQ(gv.value().accepted_prefix, cv.value().accepted_prefix);
+    SF_CHECK(gv.value().per_position == cv.value().per_position);
+    SF_CHECK(gv.value().authoritative_next_generation == cv.value().authoritative_next_generation);
+}
+
+// Regression: like the CPU reference, a candidate without a tokenizer identity
+// or of another vocabulary is a verifier failure, never an acceptance.
+SF_TEST_FN(cuda_verifier_rejects_unidentified_candidates_like_cpu) {
+    CpuProposerConfig pc;
+    pc.aligned_tokens = 4;
+    CpuProposerExecutor cpu(pc);
+    auto r = cpu.propose(make_input(4, 0));
+    SF_CHECK(r.has_value());
+    CudaVerifierExecutor gpu_v;
+    auto v = make_verify(*r.value().candidate);
+
+    v.candidate_identity.tokenizer = TokenizerId{};   // identity missing
+    auto g0 = gpu_v.verify(v);
+    SF_CHECK(g0.has_value());
+    SF_CHECK(g0.value().outcome == AcceptanceOutcome::VerifierFailure);
+    SF_CHECK(g0.value().retryable == true);
+    SF_CHECK_EQ(g0.value().accepted_prefix, 0u);
+
+    v.candidate_identity.tokenizer = TokenizerId{9};
+    v.candidate_identity.vocab_size = 100;            // another vocabulary
+    auto g1 = gpu_v.verify(v);
+    SF_CHECK(g1.has_value());
+    SF_CHECK(g1.value().outcome == AcceptanceOutcome::VerifierFailure);
+    SF_CHECK(g1.value().retryable == false);
+    SF_CHECK_EQ(g1.value().accepted_prefix, 0u);
+}

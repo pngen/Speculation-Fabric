@@ -135,12 +135,15 @@ struct SpeculationFabric::Impl {
     std::map<RequestId, RequestState> requests;
     Stats stats;
     std::deque<Event> global_events;
+    // Monotonic source of event identities. The bounded history drops old
+    // events, so its size cannot be used to derive a unique id.
+    std::uint64_t next_event_id{0};
 
     void push_event(RequestId id, const std::string& type, const std::string& detail,
                     const std::string& json) {
         const std::uint64_t now = cfg.clock->monotonic_ns();
         Event e;
-        e.id = EventId{static_cast<std::uint64_t>(global_events.size() + 1)};
+        e.id = EventId{++next_event_id};
         e.timestamp_ns = now;
         e.request = id;
         e.type = type;
@@ -211,13 +214,14 @@ SpeculationFabric::~SpeculationFabric() = default;
 
 Result<void> SpeculationFabric::submit(const SpeculationRequest& req) {
     std::lock_guard<std::mutex> g(impl_->mtx);
-    auto& rs = impl_->requests[req.id];
-    if (!rs.req.id.is_null()) {
+    if (impl_->requests.find(req.id) != impl_->requests.end()) {
         // A duplicate RequestId is a duplicate submission and is rejected;
-        // it is never silently treated as an overwrite.
+        // it is never silently treated as an overwrite. Registration is
+        // decided by presence in the registry, so it holds for every id value.
         return Result<void>::err(ErrorCode::already_exists,
                                  "request id already registered");
     }
+    auto& rs = impl_->requests[req.id];
     rs.req = req;
     rs.attempt = AttemptId{1};
     rs.epoch = cfg_.epoch;
@@ -442,6 +446,11 @@ Result<CycleOutcome> SpeculationFabric::run_cycle(RequestId id) {
     ProposalRationale rationale;
     std::uint32_t branch_count = 1;
     std::uint32_t depth = 0;
+    // The authority this cycle was started under. It is re-validated before
+    // anything is committed.
+    CoordinatorEpoch cycle_epoch;
+    AttemptId cycle_attempt;
+    AuthGeneration cycle_base;
 
     // Phase 1: validate + prepare under the lock.
     {
@@ -481,9 +490,16 @@ Result<CycleOutcome> SpeculationFabric::run_cycle(RequestId id) {
             impl_->push_event(id, "cycle.incompatible", o.summary, "{}");
             return Result<CycleOutcome>::ok(o);
         }
+        // Outstanding speculative work is work that has not been resolved yet.
+        // Finalized proposals are history: counting them would stop a request
+        // from ever speculating again once it had completed enough cycles.
+        std::uint32_t outstanding = 0;
+        for (const auto& p : rs.proposals) {
+            if (!p.finalized) ++outstanding;
+        }
         const auto bp = impl_->scheduler->check_backpressure(
             rs.req, static_cast<std::uint32_t>(rs.branches.size()),
-            static_cast<std::uint32_t>(rs.proposals.size()),
+            outstanding,
             impl_->active_reservation_bytes(rs) ? 0 : 1,
             impl_->stats.tokens_proposed == 0
                 ? 1.0
@@ -509,6 +525,9 @@ Result<CycleOutcome> SpeculationFabric::run_cycle(RequestId id) {
             o.summary = "no proposer/verifier executor registered";
             return Result<CycleOutcome>::ok(o);
         }
+        cycle_epoch = rs.epoch;
+        cycle_attempt = rs.attempt;
+        cycle_base = rs.auth_gen;
 
         (void)rs.cycle.apply(SpeculationEvent::PlanProposal);
         (void)rs.cycle.apply(SpeculationEvent::ReserveProposal);
@@ -547,6 +566,28 @@ Result<CycleOutcome> SpeculationFabric::run_cycle(RequestId id) {
         auto pr = proposer->propose(pin);
         if (pr.is_error()) {
             return Result<CycleOutcome>::err(pr.error_code(), pr.error().message);
+        }
+        // A proposal that did not succeed carries no candidate, and a candidate
+        // that is empty or deeper than the dispatched depth is invalid. Neither
+        // is ever verified or committed.
+        const ProposalResult& produced = pr.value();
+        if (!produced.success() || !produced.candidate) {
+            auto o = CycleOutcome::make(produced.retryable()
+                                            ? CycleOutcomeKind::ProposalRetryableFailure
+                                            : CycleOutcomeKind::ProposalNonRetryableFailure);
+            o.error = produced.error != ErrorCode::ok ? produced.error
+                                                      : ErrorCode::invalid_proposal;
+            o.summary = produced.detail;
+            o.depth = depth;
+            return Result<CycleOutcome>::ok(o);
+        }
+        const auto candidate_ok = produced.candidate->validate(depth);
+        if (candidate_ok.is_error()) {
+            auto o = CycleOutcome::make(CycleOutcomeKind::ProposalNonRetryableFailure);
+            o.error = candidate_ok.error_code();
+            o.summary = candidate_ok.error().message;
+            o.depth = depth;
+            return Result<CycleOutcome>::ok(o);
         }
         proposed.push_back(BranchResult{pr.value(), BranchId{b + 1}, pin.provenance.proposer_model});
     }
@@ -589,24 +630,59 @@ Result<CycleOutcome> SpeculationFabric::run_cycle(RequestId id) {
     }
     auto& rs = it->second;
 
-    if (rs.terminal || rs.cancelled) {
+    // The completion is only valid under the authority the cycle started with:
+    // a request that became terminal or cancelled, a newer attempt, or an
+    // authoritative base that advanced while the work was in flight makes it
+    // stale, and stale work commits nothing.
+    const auto authority =
+        impl_->check_authority(rs, cycle_epoch, cycle_attempt, cycle_base, 0);
+    if (authority.is_error()) {
         auto o = CycleOutcome::make(CycleOutcomeKind::StaleAuthorityRejected);
-        o.error = rs.terminal ? ErrorCode::completion_after_terminal
-                              : ErrorCode::completion_after_cancellation;
+        o.error = authority.error_code();
         o.summary = "authority changed while speculative work was in flight";
         ++impl_->stats.proposals_rejected_stale;
         impl_->push_event(id, "cycle.stale", o.summary, "{}");
         return Result<CycleOutcome>::ok(o);
     }
 
-    std::size_t winner = 0;
-    for (std::size_t i = 1; i < accepted.size(); ++i) {
-        if (accepted[i].accepted_prefix > accepted[winner].accepted_prefix) {
+    // An acceptance can never cover more positions than its candidate holds.
+    for (std::size_t i = 0; i < accepted.size(); ++i) {
+        if (!accepted[i].is_failure() &&
+            accepted[i].accepted_prefix > proposed[i].pr.candidate->size()) {
+            auto o = CycleOutcome::make(CycleOutcomeKind::VerificationNonRetryableFailure);
+            o.error = ErrorCode::acceptance_exceeds_candidate;
+            o.summary = "verifier accepted more positions than the candidate holds";
+            o.depth = depth;
+            impl_->push_event(id, "cycle.verification_failed", o.summary, "{}");
+            return Result<CycleOutcome>::ok(o);
+        }
+    }
+
+    // A verifier failure is not an acceptance result: a failed branch can
+    // neither win nor be reported as an accept or a reject.
+    std::size_t winner = accepted.size();
+    for (std::size_t i = 0; i < accepted.size(); ++i) {
+        if (accepted[i].is_failure()) continue;
+        if (winner == accepted.size()) {
+            winner = i;
+        } else if (accepted[i].accepted_prefix > accepted[winner].accepted_prefix) {
             winner = i;
         } else if (accepted[i].accepted_prefix == accepted[winner].accepted_prefix &&
                    proposed[i].branch.get() < proposed[winner].branch.get()) {
             winner = i;
         }
+    }
+    if (winner == accepted.size()) {
+        auto o = CycleOutcome::make(accepted.front().retryable
+                                        ? CycleOutcomeKind::VerificationRetryableFailure
+                                        : CycleOutcomeKind::VerificationNonRetryableFailure);
+        o.acceptance = AcceptanceOutcome::VerifierFailure;
+        o.error = accepted.front().retryable ? ErrorCode::verification_retryable_failure
+                                             : ErrorCode::verification_non_retryable_failure;
+        o.summary = accepted.front().verifier_note;
+        o.depth = depth;
+        impl_->push_event(id, "cycle.verification_failed", o.summary, "{}");
+        return Result<CycleOutcome>::ok(o);
     }
 
     const BranchId win_branch = proposed[winner].branch;
@@ -642,10 +718,15 @@ Result<CycleOutcome> SpeculationFabric::run_cycle(RequestId id) {
     outcome.depth = depth;
     outcome.proposed_tokens = candidate_len;
 
+    // ProposalStarted / VerificationStarted are declared steps of the cycle:
+    // without them every later transition (including Commit and Rollback) is
+    // undeclared and the cycle never reaches its real final phase.
+    (void)rs.cycle.apply(SpeculationEvent::ProposalStarted);
     (void)rs.cycle.apply(SpeculationEvent::ProposalFinished);
     (void)rs.cycle.apply(SpeculationEvent::PlanVerification);
     (void)rs.cycle.apply(SpeculationEvent::ReserveVerification);
     (void)rs.cycle.apply(SpeculationEvent::DispatchVerification);
+    (void)rs.cycle.apply(SpeculationEvent::VerificationStarted);
     (void)rs.cycle.apply(SpeculationEvent::VerificationFinished);
 
     auto retire_others = [&](std::size_t keep_index) {
@@ -659,36 +740,27 @@ Result<CycleOutcome> SpeculationFabric::run_cycle(RequestId id) {
         const std::uint64_t keep_branch = proposed[keep_index].branch.get();
         std::uint64_t loser_count = 0;
         // Record every branch that was proposed; the winner stays active, all
-        // others are retired. Each branch has independent identity.
+        // others are retired. Each branch has independent identity. Branch ids
+        // are reused by every cycle, so the record always describes this
+        // cycle's branch (its lineage and whether it won), and every losing
+        // branch is counted exactly once.
         for (const auto& br : proposed) {
+            const bool loser = (br.branch.get() != keep_branch);
+            Branch nb;
+            nb.id = br.branch;
+            nb.request = rs.req.id;
+            nb.sequence = rs.req.sequence;
+            nb.attempt = rs.attempt;
+            nb.cycle = CycleId{rs.completed_cycles + 1};
+            nb.base_generation = cycle_base;
+            nb.proposer = rs.req.draft_model;
+            nb.retired = loser;
             bool found = false;
             for (auto& bb : rs.branches) {
-                if (bb.id == br.branch) { found = true; break; }
+                if (bb.id == br.branch) { bb = nb; found = true; break; }
             }
-            if (!found) {
-                Branch nb;
-                nb.id = br.branch;
-                nb.request = rs.req.id;
-                nb.sequence = rs.req.sequence;
-                nb.attempt = rs.attempt;
-                nb.cycle = CycleId{rs.completed_cycles + 1};
-                nb.base_generation = rs.auth_gen;
-                nb.proposer = rs.req.draft_model;
-                nb.retired = (br.branch.get() != keep_branch);
-                rs.branches.push_back(nb);
-                if (br.branch.get() != keep_branch) ++loser_count;
-            }
-            if (br.branch.get() != keep_branch) {
-                bool already_retired = false;
-                for (auto& bb : rs.branches) {
-                    if (bb.id == br.branch) {
-                        if (!bb.retired) { bb.retired = true; }
-                        already_retired = bb.retired;
-                        break;
-                    }
-                }
-                if (already_retired) ++loser_count;
-            }
+            if (!found) rs.branches.push_back(nb);
+            if (loser) ++loser_count;
         }
         rb.retired_branches = static_cast<std::uint32_t>(loser_count);
         for (auto& res : rs.reservations) {
@@ -710,6 +782,7 @@ Result<CycleOutcome> SpeculationFabric::run_cycle(RequestId id) {
         if (r2.has_value()) outcome.phase = r2.value();
         outcome.rollback = retire_others(winner);
         outcome.outcome = CycleOutcomeKind::VerificationSuccessFullAccept;
+        outcome.acceptance = AcceptanceOutcome::FullAccept;
         outcome.commit.success = true;
         outcome.commit.committed_tokens = accepted_prefix;
         outcome.commit.accepted_prefix = accepted_prefix;
@@ -740,6 +813,7 @@ Result<CycleOutcome> SpeculationFabric::run_cycle(RequestId id) {
         outcome.commit.new_state = rs.auth_state;
         outcome.commit.new_state_generation = rs.auth_state_gen;
         outcome.outcome = CycleOutcomeKind::VerificationSuccessPartialAccept;
+        outcome.acceptance = AcceptanceOutcome::PartialAccept;
         outcome.accepted_tokens = accepted_prefix;
         outcome.rejected_tokens = rejected_tokens;
         ++impl_->stats.partial_accept_count;

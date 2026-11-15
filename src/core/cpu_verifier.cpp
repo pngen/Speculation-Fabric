@@ -92,7 +92,9 @@ Result<AcceptanceResult> CpuVerifierExecutor::verify(const VerificationInput& in
         const bool accepted = expected == input.candidate.tokens[i].id;
         result.per_position[i] = accepted ? 1u : 0u;
         if (accepted) {
-            ++result.accepted_prefix;
+            // Only positions before the first rejection belong to the accepted
+            // prefix; a later matching position is still a rejected suffix.
+            if (result.first_rejection_index == n) ++result.accepted_prefix;
         } else if (result.first_rejection_index == n) {
             result.first_rejection_index = i;
         }

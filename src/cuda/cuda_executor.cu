@@ -116,7 +116,9 @@ __global__ void verifyKernel(const std::uint32_t* w, const std::uint32_t* b,
             const bool acc = (expected == cand[i]);
             perpos[i] = acc ? 1u : 0u;
             if (acc) {
-                ++(*accepted);
+                // Only positions before the first rejection belong to the
+                // accepted prefix (identical to the CPU reference).
+                if (*firstrej == len) ++(*accepted);
             } else if (*firstrej == len) {
                 *firstrej = i;
             }
@@ -263,6 +265,21 @@ Result<AcceptanceResult> CudaVerifierExecutor::verify(const VerificationInput& i
         result.outcome = AcceptanceOutcome::VerifierFailure;
         result.retryable = true;
         result.verifier_note = "candidate is empty";
+        return Result<AcceptanceResult>::ok(result);
+    }
+    // Identical to the CPU reference: a null tokenizer identity is a retryable
+    // verifier failure; an incompatible vocabulary is non-retryable. Candidates
+    // of another vocabulary are never verified as if they were compatible.
+    if (input.candidate_identity.tokenizer.is_null()) {
+        result.outcome = AcceptanceOutcome::VerifierFailure;
+        result.retryable = true;
+        result.verifier_note = "tokenizer identity missing";
+        return Result<AcceptanceResult>::ok(result);
+    }
+    if (input.candidate_identity.vocab_size != kVocab) {
+        result.outcome = AcceptanceOutcome::VerifierFailure;
+        result.retryable = false;
+        result.verifier_note = "vocabulary size incompatible";
         return Result<AcceptanceResult>::ok(result);
     }
     if (cudaSetDevice(0) != cudaSuccess) {

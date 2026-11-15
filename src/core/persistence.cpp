@@ -74,6 +74,18 @@ private:
 }  // namespace
 
 Result<std::vector<std::uint8_t>> serialize_archive(const StateArchive& archive) {
+    // The format's strict bounds apply to the writer as well: an archive the
+    // decoder would reject can never be restored, so it is never produced.
+    if (archive.requests.size() > kMaxRequests) {
+        return Result<std::vector<std::uint8_t>>::err(ErrorCode::out_of_range,
+                                                      "request count too large");
+    }
+    for (const auto& r : archive.requests) {
+        if (r.committed.size() > kMaxTokensPerRequest) {
+            return Result<std::vector<std::uint8_t>>::err(ErrorCode::out_of_range,
+                                                          "token count too large");
+        }
+    }
     Writer w;
     // Magic + version.
     w.u8('S'); w.u8('F'); w.u8('A'); w.u8('R');
@@ -175,7 +187,13 @@ Result<StateArchive> deserialize_archive(const std::vector<std::uint8_t>& blob) 
         }
         out.requests.push_back(std::move(p));
     }
-    (void)r.remaining();  // the 4-byte checksum suffix is validated above
+    // The declared contents must end exactly at the 4-byte checksum suffix
+    // (validated above): fewer bytes left means a count read into the checksum,
+    // more bytes left means trailing data. Both are rejected.
+    if (r.remaining() != 4) {
+        return Result<StateArchive>::err(ErrorCode::malformed,
+                                         "archive length does not match its declared contents");
+    }
     return Result<StateArchive>::ok(std::move(out));
 }
 
