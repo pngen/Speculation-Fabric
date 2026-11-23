@@ -80,11 +80,13 @@ inline int run_all() {
         }                                                \
     } while (0)
 
+// The operands are copied, not bound by reference: an operand may refer into a
+// temporary that is gone by the next statement.
 #define SF_CHECK_EQ(a, b)                                      \
     do {                                                       \
         ++::sf_test::check_count();                            \
-        const auto& _a = (a);                                  \
-        const auto& _b = (b);                                  \
+        const auto _a = (a);                                   \
+        const auto _b = (b);                                   \
         if (!(_a == _b)) {                                     \
             ::sf_test::fail(__FILE__, __LINE__,                \
                             std::string("not equal: ") + #a);  \
@@ -94,8 +96,8 @@ inline int run_all() {
 #define SF_CHECK_NE(a, b)                                      \
     do {                                                       \
         ++::sf_test::check_count();                            \
-        const auto& _a = (a);                                  \
-        const auto& _b = (b);                                  \
+        const auto _a = (a);                                   \
+        const auto _b = (b);                                   \
         if (_a == _b) {                                        \
             ::sf_test::fail(__FILE__, __LINE__,                \
                             std::string("unexpected equal: ") + #a); \
